@@ -1,0 +1,7 @@
+.env
+'Тестовое задание'
+__pycache__/
+test*
+*.log
+*.json
+*.zip

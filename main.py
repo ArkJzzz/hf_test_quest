@@ -21,7 +21,7 @@ from magic import Magic
 
 
 logging.basicConfig(
-    format='%(asctime)s %(name)s - %(message)s', 
+    format='%(name)s:%(funcName)s:%(lineno)d - %(message)s', 
     datefmt='%Y-%b-%d %H:%M:%S (%Z)',
 )
 logger = logging.getLogger(__file__)
@@ -57,7 +57,7 @@ def main():
     host = 'dev-100-api.huntflow.ru'
 
 
-    # filename = 'resume.pdf'
+    filename = 'test_resume.pdf'
     # answer = upload_resume(host, huntflow_token, filename)
     # # vacancies = get_company_vacancies(host, huntflow_token)
 
@@ -94,19 +94,32 @@ def main():
     # print(dataframe[df_filter])
 
     applicants = dataframe['ФИО'].tolist()
+
     for applicant in applicants:
-        print(applicant)
+        clear_name = ' '.join(applicant.split())
         print()
+        # logger.debug(clear_name)
+
+        resume_file = find_resume_file(clear_name, FILES_DIR)
+        logger.debug(resume_file)
 
 
-    for root, dirs, files in walkpath(FILES_DIR):
+
+
+def find_resume_file(applicant_fullname, files_dir):
+    logger.debug('{} {}'.format(len(applicant_fullname), applicant_fullname))
+    applicant_fullname = replace_noncyrillic_characters(applicant_fullname)
+
+    for root, dirs, files in walkpath(files_dir):
         for filename in files:
-            filename_chunks = filename.split('.')[:-1]
-            print(filename_chunks)
-    
-    # positions_to_add = dataframe['Должность'].tolist()
-    # positions_to_add = list(set(positions_to_add))
-    # print(positions_to_add)
+            filename_without_ext = filename.split('.')
+            filename_chunks = filename_without_ext[0].split()
+            if filename_chunks:
+                clear_filename = ' '.join(filename_chunks)
+                clear_filename = replace_noncyrillic_characters(clear_filename)
+                if applicant_fullname in clear_filename:
+                    return joinpath(root, filename)
+
 
 
 
@@ -149,6 +162,7 @@ def add_applicant(host, token):
             }
         ]
     }
+
 
 def get_company_vacancies(host, token):
     '''Получение списка вакансий компании'''
@@ -205,6 +219,18 @@ def upload_resume(host, token, filename):
     return response.json()
     
 
+def replace_noncyrillic_characters(string):
+
+    CHARACTERS_TO_REPLACE =[
+        [b'\xd0\xb8\xcc\x86', b'\xd0\xb9'], # й
+        # добавьте сюда другие символы, которые нужно заменить
+    ]
+
+    string = string.encode('utf-8')
+    for character in CHARACTERS_TO_REPLACE:
+        string = string.replace(character[0], character[1])
+
+    return string.decode('utf-8')
 
 if __name__ == "__main__":
     main()
@@ -239,7 +265,4 @@ if __name__ == "__main__":
 
 # {'id': 50, 'name': 'Declined', 
 #             'type': 'trash', 'removed': None, 'order': 9999}
-
-
-
 

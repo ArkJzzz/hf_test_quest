@@ -5,6 +5,7 @@ __author__ = 'ArkJzzz (arkjzzz@gmail.com)'
 import os
 import logging
 import requests
+import re
 
 from os import getenv
 from os import listdir
@@ -14,8 +15,8 @@ from os.path import dirname
 from os.path import abspath
 from os.path import join as joinpath
 
-from dotenv import load_dotenv
 import pandas
+from dotenv import load_dotenv
 from magic import Magic
 
 
@@ -29,19 +30,22 @@ logger.setLevel(logging.DEBUG)
 
 
 def main():
-    # Я предполагаю, что структура директорий и файлов остается неизменной
-    # и имеет следующий вид (исходя из задачи):
-    # 
-    #    Тестовое задание
-    #    ├── Тестовая база.xlsx
-    #    ├── README.md
-    #    ├── Frontend-разработчик
-    #    │   ├── Глибин Виталий Николаевич.doc
-    #    │   └── Танский Михаил.pdf
-    #    └── Менеджер по продажам
-    #        ├── Корниенко Максим.doc
-    #        └── Шорин Андрей.pdf
-    #
+    '''
+    Я предполагаю, что структура директорий и файлов остается неизменной
+    и имеет следующий вид (исходя из задачи):
+    
+       Тестовое задание
+       ├── Тестовая база.xlsx
+       ├── README.md
+       ├── Frontend-разработчик
+       │   ├── Глибин Виталий Николаевич.doc
+       │   └── Танский Михаил.pdf
+       └── Менеджер по продажам
+           ├── Корниенко Максим.doc
+           └── Шорин Андрей.pdf
+    '''
+
+    # Init
 
     BASE_DIR = dirname(abspath(__file__))
     FILES_DIR = 'Тестовое задание'
@@ -57,129 +61,85 @@ def main():
     host = 'dev-100-api.huntflow.ru'
 
 
-    filename = 'test_resume.pdf'
-    # answer = upload_resume(host, huntflow_token, filename)
-    # # vacancies = get_company_vacancies(host, huntflow_token)
+    # Do 
 
-    # applicant_fullname = answer['fields']['name']
-    # applicant_fullname = '{last} {first} {middle}'.format(
-    #         first=applicant_fullname['first'],
-    #         middle=applicant_fullname['middle'],
-    #         last=applicant_fullname['last'],
-    #     )
-    # print(applicant_fullname)
-
-
-
-    # read .xlsx 
-
-    # Я предполагаю, что файл с кандидатами имеет неизменный формат, 
-    # такой, как в файле 'Тестовая база.xlsx':
-    # - значения ячеек столбца 'Должность' выбираются из списка
-    #   и соответствуют названию вакансии в Хантфлоу
-    # - значения ячеек столбца 'Статус' выбираются из списка
-    #   и соответствуют типу (id) статуса в Хантфлоу
-    # - значения ячеек столбца 'ФИО' всегда идут в порядке 
-    #   Фамилия-Имя-Отчество (при наличии), и соответствуют имени 
-    #   файла резюме
-
-    dataframe = pandas.read_excel(applicants_file, sheet_name=sheet_name)
-    
-
-    # print(dataframe.columns.ravel())
-    # print(dataframe['ФИО'].tolist())
-    # print(dataframe.to_dict())
-    # print(dataframe.loc[[0]])
-    # df_filter = dataframe['Должность'].isin(['Frontend-разработчик'])
-    # print(dataframe[df_filter])
-
-    applicants = dataframe['ФИО'].tolist()
+    vacancies = get_company_vacancies(host, huntflow_token)
+    vacancies = vacancies['items']
+    applicants = get_applicants_from_excel_file(applicants_file, sheet_name)
 
     for applicant in applicants:
-        clear_name = ' '.join(applicant.split())
-        print()
-        # logger.debug(clear_name)
+        resume_file = find_resume_file(
+                applicant_fullname=applicant['fullname'], 
+                files_dir=FILES_DIR,
+            )
+        logger.debug('{}\n{}'.format(applicant, resume_file))
+        recognized_resume = upload_resume(
+                host=host,
+                token=huntflow_token,
+                filename=resume_file,
+            )
+        applicant_data = get_applicant_data(
+                applicant=applicant, 
+                recognized_resume=recognized_resume, 
+                vacancies=vacancies,
+            )
+        add_applicant(
+                host=host,
+                token=huntflow_token,
+                applicant_data=applicant_data,
+            )
 
-        resume_file = find_resume_file(clear_name, FILES_DIR)
-        logger.debug(resume_file)
-
-
-
-
-def find_resume_file(applicant_fullname, files_dir):
-    logger.debug('{} {}'.format(len(applicant_fullname), applicant_fullname))
-    applicant_fullname = replace_noncyrillic_characters(applicant_fullname)
-
-    for root, dirs, files in walkpath(files_dir):
-        for filename in files:
-            filename_without_ext = filename.split('.')
-            filename_chunks = filename_without_ext[0].split()
-            if filename_chunks:
-                clear_filename = ' '.join(filename_chunks)
-                clear_filename = replace_noncyrillic_characters(clear_filename)
-                if applicant_fullname in clear_filename:
-                    return joinpath(root, filename)
-
-
-
-
-def add_applicant(host, token):
-    '''Добавление кандидата в базу'''
     
+
+
+def get_applicants_from_excel_file(applicants_file, sheet_name):
+    '''    
+    Я предполагаю, что файл с кандидатами имеет неизменный формат, 
+    такой, как в файле 'Тестовая база.xlsx':
+    - значения ячеек столбца 'Должность' выбираются из списка
+      и соответствуют названию вакансии в Хантфлоу
+    - значения ячеек столбца 'Статус' выбираются из списка
+      и соответствуют типу (id) статуса в Хантфлоу
+    - значения ячеек столбца 'ФИО' всегда идут в порядке 
+      Фамилия-Имя-Отчество (при наличии), и соответствуют имени 
+      файла резюме
+    '''
+
+    excel_data = pandas.read_excel(applicants_file, sheet_name=sheet_name)
+    applicants = []
+
+    for str_number in range(len(excel_data)):
+        applicant = {
+            'position': excel_data.loc[str_number, 'Должность'],
+            'fullname': excel_data.loc[str_number, 'ФИО'],
+            'salary': excel_data.loc[str_number, 'Ожидания по ЗП'],
+            'comment': excel_data.loc[str_number, 'Комментарий'],
+            'status': excel_data.loc[str_number, 'Статус'],
+        }
+        applicants.append(applicant)
+
+    return applicants
+
+
+def get_applicants(host, token):
     url = 'https://{host}/account/6/applicants'.format(host=host)
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
-    }   
-    response = requests.post(url, headers=headers, json=payload)
-
-
-    payload = {
-        "last_name": "Глибин",
-        "first_name": "Виталий",
-        "middle_name": "Николаевич",
-        "phone": "89260731778",
-        "email": "glibin.v@gmail.com",
-        "position": "Фронтендер",
-        "company": "ХХ",
-        "money": "100000 руб",
-        "birthday_day": 20,
-        "birthday_month": 7,
-        "birthday_year": 1984,
-        "photo": 12341,
-        "externals": [
-            {
-                "data": {
-                    "body": "Текст резюме\nТакой текст"
-                },
-                "auth_type": "NATIVE",
-                "files": [
-                    {
-                        "id": 12430
-                    }
-                ],
-                "account_source": 208
-            }
-        ]
     }
-
-
-def get_company_vacancies(host, token):
-    '''Получение списка вакансий компании'''
-    
-    url = 'https://{host}/account/6/vacancies'.format(host=host)
-    headers = {
-        'User-Agent': 'test-quest (arkjzzz@gmail.com)',
-        'Authorization': token,
-    }   
     response = requests.get(url, headers=headers)
-    vacancies = response.json()
-    logger.debug('Количество вакансий комании: {num}'.format(
-            num=len(vacancies['items']),
-        ),
-    )
+    return(response.json())
 
-    return(vacancies)
+
+def find_resume_file(applicant_fullname, files_dir):
+    applicant_fullname = replace_noncyrillic_characters(applicant_fullname)
+    for root, dirs, files in walkpath(files_dir):
+        for filename in files:
+            filename_without_ext = filename.split('.')
+            clear_filename = replace_noncyrillic_characters(filename_without_ext[0])
+            if clear_filename:
+                if applicant_fullname in clear_filename:
+                    return joinpath(root, filename)
 
 
 def upload_resume(host, token, filename):
@@ -200,10 +160,8 @@ def upload_resume(host, token, filename):
         # 'Content-Type': 'multipart/form-data',
         'X-File-Parse': 'true', 
     }
-
     data = open(filename, 'rb')
     content_type = Magic(mime=True).from_file(filename)
-
     files = {
         'file': (filename, data, content_type),
     }
@@ -213,26 +171,120 @@ def upload_resume(host, token, filename):
         headers=headers, 
         files=files, 
     )
+    response.raise_for_status()
     logger.debug('response.OK: {}'.format(response.ok))
-    # logger.debug(response.json())
 
     return response.json()
     
 
-def replace_noncyrillic_characters(string):
+def get_applicant_data(applicant, recognized_resume, vacancies):
+    ''' Подготавливает данные для добавления кандидата в базу '''
+    fields = recognized_resume['fields']
 
+    experiense = recognized_resume['fields']['experience']
+    if experiense[0]:
+        position = experiense[0]['position']
+        company = experiense[0]['company']
+    salary = ''.join(re.findall(r'\d', str(applicant['salary'])))
+    birthdate = recognized_resume['fields']['birthdate']
+    if not birthdate:
+        birthdate = {
+            'month': None,
+            'day': None,
+            'precision': None,
+            'year': None,
+        }
+    photo = recognized_resume['photo']
+    if not photo:
+        photo = {'id': None}
+
+    applicant_data = {
+        'last_name': recognized_resume['fields']['name']['last'],
+        'first_name': recognized_resume['fields']['name']['first'],
+        'middle_name': recognized_resume['fields']['name']['middle'],
+        'phone': ', '.join(recognized_resume['fields']['phones']),
+        'email': recognized_resume['fields']['email'],
+        'position': position,
+        'company': company,
+        'money': salary,
+        'birthday_day': birthdate['day'], #
+        'birthday_month': birthdate['month'],
+        'birthday_year': birthdate['year'],
+        'photo': photo['id'],
+        'externals': [
+            {
+                'data': {
+                    'body': recognized_resume['text']
+                },
+                'auth_type': 'NATIVE',
+                'files': [
+                    {
+                        'id': recognized_resume['id']
+                    }
+                ],
+                'account_source': 119
+            }
+        ]
+    }
+
+    return applicant_data
+
+
+def add_applicant(host, token, applicant_data):
+    '''Добавление кандидата в базу'''
+    
+    url = 'https://{host}/account/6/applicants'.format(host=host)
+    headers = {
+        'User-Agent': 'test-quest (arkjzzz@gmail.com)',
+        'Authorization': token,
+    }
+    payload = applicant_data
+
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+
+    return response.json()
+
+
+def get_company_vacancies(host, token):
+    '''Получение списка вакансий компании'''
+    
+    url = 'https://{host}/account/6/vacancies'.format(host=host)
+    headers = {
+        'User-Agent': 'test-quest (arkjzzz@gmail.com)',
+        'Authorization': token,
+    }
+
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    logger.debug('Количество вакансий комании: {num}'.format(
+            num=len(response.json()['items']),
+        ),
+    )
+
+    return response.json()
+
+
+def replace_noncyrillic_characters(string):
+    '''
+    Функция нормализует символы юникода к кириллическим символам
+    '''
     CHARACTERS_TO_REPLACE =[
-        [b'\xd0\xb8\xcc\x86', b'\xd0\xb9'], # й
-        # добавьте сюда другие символы, которые нужно заменить
+        # добавьте сюда символы, которые нужно заменить в таком формате:
+        # [заменяемый, заменяющий],
+        [b'\xd0\xb8\xcc\x86', b'\xd0\xb9'], # й    
     ]
 
-    string = string.encode('utf-8')
-    for character in CHARACTERS_TO_REPLACE:
-        string = string.replace(character[0], character[1])
+    if string:
+        string = ' '.join(string.split())
+        string = string.encode('utf-8')
+        for character in CHARACTERS_TO_REPLACE:
+            string = string.replace(character[0], character[1])
 
-    return string.decode('utf-8')
+        return string.decode('utf-8')
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()
 
 

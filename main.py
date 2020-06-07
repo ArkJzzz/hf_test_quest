@@ -53,7 +53,6 @@ def main():
 
     applicants_file = 'Тестовая база.xlsx'
     applicants_file = joinpath(FILES_DIR, applicants_file)
-    sheet_name = 'Лист1'
 
     # API huntflow.ru
     load_dotenv()
@@ -65,7 +64,7 @@ def main():
 
     vacancies = get_company_vacancies(host, huntflow_token)
     vacancies = vacancies['items']
-    applicants = get_applicants_from_excel_file(applicants_file, sheet_name)
+    applicants = get_applicants_from_excel_file(applicants_file)
 
 
     for applicant in applicants:
@@ -73,7 +72,6 @@ def main():
                 applicant_fullname=applicant['fullname'], 
                 files_dir=FILES_DIR,
             )
-        logger.debug('{}\n{}'.format(applicant, resume_file))
         recognized_resume = upload_resume(
                 host=host,
                 token=huntflow_token,
@@ -91,49 +89,38 @@ def main():
             )
 
         last_added = get_applicants(host, huntflow_token)['items'][0]
-        print(last_added)
-        print()
-
-
-
-
-    # existing_applicants = get_applicants(host, huntflow_token)['items']
-    # print('всего в базе кандидатов:', get_applicants(host, huntflow_token)['total_items'])
-    # print(existing_applicants[0])
-    # for applicant in existing_applicants:
-    #     print(applicant['id'], applicant['last_name'])
-
-def add_to_vacancy(host, token, applicant):
-    ''' Добавление кандидата на вакануию '''
-
-    url = 'https://{host}/account/6/applicants{applicant_id}/vacancy'.format(
-            host=host,
-            applicant_id=None, # FIXME: нужен id кандидата
+        applicant['id'] = last_added['id']
+        add_to_vacancy(
+            host=host, 
+            token=huntflow_token, 
+            applicant=applicant, 
+            vacancies=vacancies, 
+            recognized_resume=recognized_resume,
         )
+
+
+def get_company_vacancies(host, token):
+    '''Получение списка вакансий компании'''
+    
+    url = 'https://{host}/account/6/vacancies'.format(host=host)
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
     }
-    payload = {
-        "vacancy": 988,
-        "status": 1230,
-        "comment": applicant['comment'],
-        "files": [
-            {
-                "id": 1382810
-            }
-        ],
-        "rejection_reason": null,
-        "fill_quota": 234
-    }
 
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
+    response = requests.get(url, headers=headers)
+    if response.ok:
+        logger.debug('Количество вакансий комании: {num}'.format(
+                num=len(response.json()['items']),
+            ),
+        )
+    else:
+        logger.error('Ошибка получения списка вакансий')
 
-    return response.json() 
+    return response.json()
 
 
-def get_applicants_from_excel_file(applicants_file, sheet_name):
+def get_applicants_from_excel_file(applicants_file):
     '''    
     Я предполагаю, что файл с кандидатами имеет неизменный формат, 
     такой, как в файле 'Тестовая база.xlsx':
@@ -162,17 +149,9 @@ def get_applicants_from_excel_file(applicants_file, sheet_name):
         }
         applicants.append(applicant)
 
+    logger.info('Файл {} успешно прочитан'.format(applicants_file))
+
     return applicants
-
-
-def get_applicants(host, token):
-    url = 'https://{host}/account/6/applicants'.format(host=host)
-    headers = {
-        'User-Agent': 'test-quest (arkjzzz@gmail.com)',
-        'Authorization': token,
-    }
-    response = requests.get(url, headers=headers)
-    return(response.json())
 
 
 def find_resume_file(applicant_fullname, files_dir):
@@ -183,6 +162,7 @@ def find_resume_file(applicant_fullname, files_dir):
             clear_filename = replace_noncyrillic_characters(filename_without_ext[0])
             if clear_filename:
                 if applicant_fullname in clear_filename:
+                    logger.info('Файл резюме найден: {}'.format(joinpath(root, filename)))
                     return joinpath(root, filename)
 
 
@@ -215,14 +195,17 @@ def upload_resume(host, token, filename):
         headers=headers, 
         files=files, 
     )
-    response.raise_for_status()
-    logger.debug('response.OK: {}'.format(response.ok))
+    if response.ok:
+        logger.info('Файлы резюме успешно распознан: {}'.format(files))
+    else:
+        logger.error('Ошибка загрузки файлов резюме: {}'.format(files))
 
     return response.json()
     
 
 def get_applicant_data(applicant, recognized_resume, vacancies):
     ''' Подготавливает данные для добавления кандидата в базу '''
+    
     fields = recognized_resume['fields']
     experiense = recognized_resume['fields']['experience']
     if experiense[0]:
@@ -283,34 +266,94 @@ def add_applicant(host, token, applicant_data):
     payload = applicant_data
 
     response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
+    if response.ok:
+        logger.info(
+            'Кандидат {} успешно добавлен в Huntflow на должность {}'.format(
+                    applicant_data['last_name'],
+                    applicant_data['position'],
+                )
+        )
+    else:
+        logger.error(
+            'Ошибка добавления кандидата {} на должность {}'.format(
+                    applicant_data['last_name'],
+                    applicant_data['position'],
+                )
+        )
 
     return response.json()
 
 
-def get_company_vacancies(host, token):
-    '''Получение списка вакансий компании'''
-    
-    url = 'https://{host}/account/6/vacancies'.format(host=host)
+def get_applicants(host, token):
+    ''' Получение списка кандидатов '''
+
+    url = 'https://{host}/account/6/applicants'.format(host=host)
+    headers = {
+        'User-Agent': 'test-quest (arkjzzz@gmail.com)',
+        'Authorization': token,
+    }
+    response = requests.get(url, headers=headers)
+    if response.ok:
+        logger.info('Список имеющихся кандидатов успешно получен')
+    else:
+        logger.error('Ошибка получения списка имеющихся кандидатов')
+
+    return(response.json())
+
+
+def add_to_vacancy(host, token, applicant, vacancies, recognized_resume):
+    ''' Добавление кандидата на ваканcию 
+
+    Предполагается, что  значения ячеек столбца 'Должность' выбираются из списка и соответствуют названию вакансии в Хантфлоу
+    '''
+
+    url = 'https://{host}/account/6/applicants/{applicant_id}/vacancy'.format(
+            host=host,
+            applicant_id=applicant['id'],
+        )
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
     }
 
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    logger.debug('Количество вакансий комании: {num}'.format(
-            num=len(response.json()['items']),
-        ),
-    )
+    for vacancy in vacancies:
+        if vacancy['position'] == applicant['position']:
+            vacancy_id = vacancy['id']
 
-    return response.json()
+    payload = {
+        'vacancy': vacancy_id,
+        'status': applicant['status']['id'],
+        'comment': applicant['comment'],
+        'files': [
+            {
+                'id': recognized_resume['id']
+            }
+        ],
+        # 'rejection_reason': None,
+        # 'fill_quota': vacancy['applicants_to_hire']
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    if response.ok:
+        logger.info(
+            'Кандидат {applicant_name} добавлен в Huntflow на должность {position}'.format(
+                applicant_name=applicant['fullname'],
+                position=applicant['position'],
+            )
+        )
+    else:
+        logger.error('Ошибка добавления кандидата {applicant_name} в Huntflow на должность {position}'.format(
+                applicant_name=applicant['fullname'],
+                position=applicant['position'],
+            )
+        )
+
+    return response 
 
 
 def replace_noncyrillic_characters(string):
-    '''
-    Функция нормализует символы юникода к кириллическим символам
-    '''
+    ''' Функция нормализует символы юникода к кириллическим символам '''
+
     CHARACTERS_TO_REPLACE =[
         # добавьте сюда символы, которые нужно заменить в таком формате:
         # [заменяемый, заменяющий],
@@ -335,19 +378,6 @@ def replace_status(status):
     из списка и соответствуют типу (id) статуса в Хантфлоу
     '''
 
-    statuses = [
-        {41: 'New Lead'},
-        {42: 'Submitted'},
-        {43: 'Contacted'},
-        {44: 'HR Interview'},
-        {45: 'Client Interview'},
-        {46: 'Offered'},
-        {47: 'Offer Accepted'},
-        {48: 'Hired'},
-        {49: 'Trial passed'},
-        {50: 'Declined'},
-    ]
-
     if status == 'Отправлено письмо':
         status = {'id': 43, 'name': 'Contacted'}
     elif status == 'Интервью с HR':
@@ -358,6 +388,18 @@ def replace_status(status):
         status = {'id': 50, 'name': 'Declined'}
     
     # FIXME: Добавить сюда остальные статусы
+    # statuses = [
+    #     {41: 'New Lead'},
+    #     {42: 'Submitted'},
+    #     {43: 'Contacted'},
+    #     {44: 'HR Interview'},
+    #     {45: 'Client Interview'},
+    #     {46: 'Offered'},
+    #     {47: 'Offer Accepted'},
+    #     {48: 'Hired'},
+    #     {49: 'Trial passed'},
+    #     {50: 'Declined'},
+    # ]
 
     else:
         status = {'id': None, 'name': None}
@@ -369,14 +411,3 @@ def replace_status(status):
 if __name__ == '__main__':
     main()
 
-
-# {'id': 41, 'name': 'New Lead'},
-# {'id': 42, 'name': 'Submitted'},
-# {'id': 43, 'name': 'Contacted'},
-# {'id': 44, 'name': 'HR Interview'},
-# {'id': 45, 'name': 'Client Interview'},
-# {'id': 46, 'name': 'Offered'},
-# {'id': 47, 'name': 'Offer Accepted'},
-# {'id': 48, 'name': 'Hired'},
-# {'id': 49, 'name': 'Trial passed'},
-# {'id': 50, 'name': 'Declined'},

@@ -2,8 +2,9 @@
 __author__ = 'ArkJzzz (arkjzzz@gmail.com)'
 
 
-import os
+import argparse
 import logging
+import os
 import requests
 import re
 
@@ -28,10 +29,33 @@ logger = logging.getLogger(__file__)
 logger.setLevel(logging.DEBUG)
 
 
+HOST = 'dev-100-api.huntflow.ru'
+ORGANIZATION_ID = 6
+# ORGANIZATION_ID из ответа на запрос:
+# curl -X GET -H "Authorization: Bearer <token>" https://<HOST>/accounts
+
+
 def main():
+
+    parser = argparse.ArgumentParser(
+        description='''
+        Программа для переноса базы кандидатов из файла Excel в базу 
+        Huntflow с помощью Huntflow API (https://github.com/huntflow/api).
+        
+        Укажите токен к API Huntflow, 
+        имя директории, в которой находятся файлы резюме, 
+        и имя файла Excel с кандидатами.
+        '''
+    )
+
+    parser.add_argument('huntflow_token', help='Токен к API Huntflow')
+    parser.add_argument('directory', help='Путь к директории, с файлами')
+    # parser.add_argument('applicants_file', help='Имя файла с кандидатами')
+    args = parser.parse_args()
+
     '''
     Я предполагаю, что структура директорий и файлов остается неизменной
-    и имеет следующий вид (исходя из задачи):
+    и имеет следующий вид (исходя из условий ТЗ):
     
        Тестовое задание
        ├── Тестовая база.xlsx
@@ -45,23 +69,20 @@ def main():
     '''
 
     # Init
+    
+    FILES_DIR = args.directory
 
-    BASE_DIR = dirname(abspath(__file__))
-    FILES_DIR = 'Тестовое задание'
-    FILES_DIR = joinpath(BASE_DIR, FILES_DIR)
-
-    applicants_file = 'Тестовая база.xlsx'
-    applicants_file = joinpath(FILES_DIR, applicants_file)
+    for root, dirs, files in walkpath(FILES_DIR):
+        for file in files:
+            if file[-5:] == '.xlsx':
+                applicants_file = joinpath(FILES_DIR, file)
 
     # API huntflow.ru
-    load_dotenv()
-    huntflow_token = os.getenv('HUNTFLOW_TOKEN')
-    host = 'dev-100-api.huntflow.ru'
-
+    huntflow_token = 'Bearer {token}'.format(token=args.huntflow_token)
 
     # Do 
 
-    vacancies = get_company_vacancies(host, huntflow_token)
+    vacancies = get_company_vacancies(huntflow_token)
     vacancies = vacancies['items']
     applicants = get_applicants_from_excel_file(applicants_file)
 
@@ -72,7 +93,6 @@ def main():
                 files_dir=FILES_DIR,
             )
         recognized_resume = upload_resume(
-                host=host,
                 token=huntflow_token,
                 filename=resume_file,
             )
@@ -82,15 +102,13 @@ def main():
                 vacancies=vacancies,
             )
         add_applicant(
-                host=host,
                 token=huntflow_token,
                 applicant_data=applicant_data,
             )
 
-        last_added = get_applicants(host, huntflow_token)['items'][0]
+        last_added = get_applicants(huntflow_token)['items'][0]
         applicant['id'] = last_added['id']
         add_to_vacancy(
-            host=host, 
             token=huntflow_token, 
             applicant=applicant, 
             vacancies=vacancies, 
@@ -98,10 +116,13 @@ def main():
         )
 
 
-def get_company_vacancies(host, token):
+def get_company_vacancies(token):
     '''Получение списка вакансий компании'''
     
-    url = 'https://{host}/account/6/vacancies'.format(host=host)
+    url = 'https://{host}/account/{id}/vacancies'.format(
+            host=HOST,
+            id=ORGANIZATION_ID,
+        )
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
@@ -165,7 +186,7 @@ def find_resume_file(applicant_fullname, files_dir):
                     return joinpath(root, filename)
 
 
-def upload_resume(host, token, filename):
+def upload_resume(token, filename):
     '''
     Загрузка и распознование файлов
 
@@ -176,7 +197,10 @@ def upload_resume(host, token, filename):
     (Через curl запрос проходит, через requests - нет).
     '''
     
-    url = 'https://{host}/account/6/upload'.format(host=host)
+    url = 'https://{host}/account/{id}/upload'.format(
+            host=HOST,
+            id=ORGANIZATION_ID,
+        )
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
@@ -254,10 +278,13 @@ def get_applicant_data(applicant, recognized_resume, vacancies):
     return applicant_data
 
 
-def add_applicant(host, token, applicant_data):
+def add_applicant(token, applicant_data):
     '''Добавление кандидата в базу'''
     
-    url = 'https://{host}/account/6/applicants'.format(host=host)
+    url = 'https://{host}/account/{id}/applicants'.format(
+            host=HOST,
+            id=ORGANIZATION_ID,
+        )
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
@@ -283,10 +310,13 @@ def add_applicant(host, token, applicant_data):
     return response.json()
 
 
-def get_applicants(host, token):
+def get_applicants(token):
     ''' Получение списка кандидатов '''
 
-    url = 'https://{host}/account/6/applicants'.format(host=host)
+    url = 'https://{host}/account/{id}/applicants'.format(
+            host=HOST,
+            id=ORGANIZATION_ID,
+        )
     headers = {
         'User-Agent': 'test-quest (arkjzzz@gmail.com)',
         'Authorization': token,
@@ -300,14 +330,15 @@ def get_applicants(host, token):
     return(response.json())
 
 
-def add_to_vacancy(host, token, applicant, vacancies, recognized_resume):
+def add_to_vacancy(token, applicant, vacancies, recognized_resume):
     ''' Добавление кандидата на ваканcию 
 
     Предполагается, что  значения ячеек столбца 'Должность' выбираются из списка и соответствуют названию вакансии в Хантфлоу
     '''
 
-    url = 'https://{host}/account/6/applicants/{applicant_id}/vacancy'.format(
-            host=host,
+    url = 'https://{host}/account/{id}/applicants/{applicant_id}/vacancy'.format(
+            host=HOST,
+            id=ORGANIZATION_ID,
             applicant_id=applicant['id'],
         )
     headers = {

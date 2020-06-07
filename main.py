@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 from magic import Magic
 
 
-
 logging.basicConfig(
     format='%(name)s:%(funcName)s:%(lineno)d - %(message)s', 
     datefmt='%Y-%b-%d %H:%M:%S (%Z)',
@@ -405,7 +404,6 @@ def replace_status(status):
         status = {'id': None, 'name': None}
 
     return status
-
 
 
 if __name__ == '__main__':

@@ -15,7 +15,7 @@ from os.path import dirname
 from os.path import abspath
 from os.path import join as joinpath
 
-import pandas
+import openpyxl
 from dotenv import load_dotenv
 from magic import Magic
 
@@ -67,6 +67,7 @@ def main():
     vacancies = vacancies['items']
     applicants = get_applicants_from_excel_file(applicants_file, sheet_name)
 
+
     for applicant in applicants:
         resume_file = find_resume_file(
                 applicant_fullname=applicant['fullname'], 
@@ -89,7 +90,47 @@ def main():
                 applicant_data=applicant_data,
             )
 
-    
+        last_added = get_applicants(host, huntflow_token)['items'][0]
+        print(last_added)
+        print()
+
+
+
+
+    # existing_applicants = get_applicants(host, huntflow_token)['items']
+    # print('всего в базе кандидатов:', get_applicants(host, huntflow_token)['total_items'])
+    # print(existing_applicants[0])
+    # for applicant in existing_applicants:
+    #     print(applicant['id'], applicant['last_name'])
+
+def add_to_vacancy(host, token, applicant):
+    ''' Добавление кандидата на вакануию '''
+
+    url = 'https://{host}/account/6/applicants{applicant_id}/vacancy'.format(
+            host=host,
+            applicant_id=None, # FIXME: нужен id кандидата
+        )
+    headers = {
+        'User-Agent': 'test-quest (arkjzzz@gmail.com)',
+        'Authorization': token,
+    }
+    payload = {
+        "vacancy": 988,
+        "status": 1230,
+        "comment": applicant['comment'],
+        "files": [
+            {
+                "id": 1382810
+            }
+        ],
+        "rejection_reason": null,
+        "fill_quota": 234
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+
+    return response.json() 
 
 
 def get_applicants_from_excel_file(applicants_file, sheet_name):
@@ -105,16 +146,19 @@ def get_applicants_from_excel_file(applicants_file, sheet_name):
       файла резюме
     '''
 
-    excel_data = pandas.read_excel(applicants_file, sheet_name=sheet_name)
+    workbook = openpyxl.load_workbook(applicants_file, read_only=True)
+    sheet_names = workbook.get_sheet_names()
+    sheet_name = sheet_names[0]
+    excel_data = workbook.get_sheet_by_name(sheet_name)
     applicants = []
 
-    for str_number in range(len(excel_data)):
+    for row in list(excel_data.rows)[1:]:
         applicant = {
-            'position': excel_data.loc[str_number, 'Должность'],
-            'fullname': excel_data.loc[str_number, 'ФИО'],
-            'salary': excel_data.loc[str_number, 'Ожидания по ЗП'],
-            'comment': excel_data.loc[str_number, 'Комментарий'],
-            'status': excel_data.loc[str_number, 'Статус'],
+            'position': row[0].value,
+            'fullname': replace_noncyrillic_characters(row[1].value),
+            'salary': ''.join(re.findall(r'\d', str(row[2].value))),
+            'comment': row[3].value,
+            'status': replace_status(row[4].value),
         }
         applicants.append(applicant)
 
@@ -180,12 +224,10 @@ def upload_resume(host, token, filename):
 def get_applicant_data(applicant, recognized_resume, vacancies):
     ''' Подготавливает данные для добавления кандидата в базу '''
     fields = recognized_resume['fields']
-
     experiense = recognized_resume['fields']['experience']
     if experiense[0]:
         position = experiense[0]['position']
         company = experiense[0]['company']
-    salary = ''.join(re.findall(r'\d', str(applicant['salary'])))
     birthdate = recognized_resume['fields']['birthdate']
     if not birthdate:
         birthdate = {
@@ -206,7 +248,7 @@ def get_applicant_data(applicant, recognized_resume, vacancies):
         'email': recognized_resume['fields']['email'],
         'position': position,
         'company': company,
-        'money': salary,
+        'money': applicant['salary'],
         'birthday_day': birthdate['day'], #
         'birthday_month': birthdate['month'],
         'birthday_year': birthdate['year'],
@@ -284,37 +326,57 @@ def replace_noncyrillic_characters(string):
         return string.decode('utf-8')
 
 
+def replace_status(status):
+    ''' 
+    Приведение строки статуса из файла с кандидатами 
+    к виду для загрузки в базу.
+
+    Предполагается, что значения ячеек столбца 'Статус' выбираются 
+    из списка и соответствуют типу (id) статуса в Хантфлоу
+    '''
+
+    statuses = [
+        {41: 'New Lead'},
+        {42: 'Submitted'},
+        {43: 'Contacted'},
+        {44: 'HR Interview'},
+        {45: 'Client Interview'},
+        {46: 'Offered'},
+        {47: 'Offer Accepted'},
+        {48: 'Hired'},
+        {49: 'Trial passed'},
+        {50: 'Declined'},
+    ]
+
+    if status == 'Отправлено письмо':
+        status = {'id': 43, 'name': 'Contacted'}
+    elif status == 'Интервью с HR':
+        status = {'id': 44, 'name': 'HR Interview'}
+    elif status == 'Выставлен оффер':
+        status = {'id': 46, 'name': 'Offered'}
+    elif status == 'Отказ':
+        status = {'id': 50, 'name': 'Declined'}
+    
+    # FIXME: Добавить сюда остальные статусы
+
+    else:
+        status = {'id': None, 'name': None}
+
+    return status
+
+
+
 if __name__ == '__main__':
     main()
 
 
-# {'id': 41, 'name': 'New Lead', 
-#             'type': 'user', 'removed': None, 'order': 1}, 
-
-# {'id': 42, 'name': 'Submitted', 
-#             'type': 'user', 'removed': None, 'order': 2}, 
-
-# {'id': 43, 'name': 'Contacted', 
-#             'type': 'user', 'removed': None, 'order': 3}, 
-
-# {'id': 44, 'name': 'HR Interview', 
-#             'type': 'user', 'removed': None, 'order': 4}, 
-
-# {'id': 45, 'name': 'Client Interview', 
-#             'type': 'user', 'removed': None, 'order': 5}, 
-
-# {'id': 46, 'name': 'Offered', 
-#             'type': 'user', 'removed': None, 'order': 6}, 
-
-# {'id': 47, 'name': 'Offer Accepted', 
-#             'type': 'user', 'removed': None, 'order': 7}, 
-
-# {'id': 48, 'name': 'Hired', 
-#             'type': 'hired', 'removed': None, 'order': 8}, 
-
-# {'id': 49, 'name': 'Trial passed', 
-#             'type': 'user', 'removed': None, 'order': 9}, 
-
-# {'id': 50, 'name': 'Declined', 
-#             'type': 'trash', 'removed': None, 'order': 9999}
-
+# {'id': 41, 'name': 'New Lead'},
+# {'id': 42, 'name': 'Submitted'},
+# {'id': 43, 'name': 'Contacted'},
+# {'id': 44, 'name': 'HR Interview'},
+# {'id': 45, 'name': 'Client Interview'},
+# {'id': 46, 'name': 'Offered'},
+# {'id': 47, 'name': 'Offer Accepted'},
+# {'id': 48, 'name': 'Hired'},
+# {'id': 49, 'name': 'Trial passed'},
+# {'id': 50, 'name': 'Declined'},

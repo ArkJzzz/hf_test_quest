@@ -1,6 +1,45 @@
 #!/usr/bin/python3
 __author__ = 'ArkJzzz (arkjzzz@gmail.com)'
 
+'''
+TODO
+
+Добавить реализацию заливки с места последнего запуска.
+Варианты:
+    - добавление дополнительного столбца в файле с кандидатами (см. update_applicants_file(applicants_file))
+
+        При выполнении get_applicants_from_excel_file(applicants_file) добавить столбец "статус добавления" (если не существует) и считывать данные ячеек из этого столбца:
+            'huntflow_upload': row[5].value if row[5].value else False, 
+                    # -> False, added_to_huntflow, added_to_vacancy
+        
+        Перед выполнением add_applicant() считывать значение applicant['huntflow_upload']:
+            if not applicant['huntflow_upload']:
+                add_applicant()
+            elif applicant['huntflow_upload'] ==  added_to_huntflow:
+                add_to_vacancy()
+            else:
+                continue
+
+        При выполнении add_applicant(): 
+            if response.ok:
+                записать в таблицу: added_to_huntflow
+            else:
+                Ошибка добавления кандидата
+
+        При выполнении add_to_vacancy(): 
+            if response.ok:
+                записать в таблицу: added_to_vacancy
+            else:
+                Ошибка добавления на вакансию
+    
+
+    - подключение redis ({applicant['fullname']: upload_status} -> False, added_to_huntflow, added_to_vacancy)
+
+    - подключение SQLite
+
+
+'''
+
 
 import argparse
 import logging

@@ -80,6 +80,7 @@ def main():
     # API huntflow.ru
     huntflow_token = 'Bearer {token}'.format(token=args.huntflow_token)
 
+    
     # Do 
 
     vacancies = get_company_vacancies(huntflow_token)
@@ -166,6 +167,7 @@ def get_applicants_from_excel_file(applicants_file):
             'salary': ''.join(re.findall(r'\d', str(row[2].value))),
             'comment': row[3].value,
             'status': replace_status(row[4].value),
+            'huntflow_upload': row[5].value if row[5].value else False,
         }
         applicants.append(applicant)
 
@@ -435,6 +437,15 @@ def replace_status(status):
         status = {'id': None, 'name': None}
 
     return status
+
+
+def update_applicants_file(applicants_file):
+    '''
+    Добавляет информацию о статусе загрузки информации о кандидате в базу: 
+    - кандидат добавлен в базу - да/нет; 
+    - кандидат добавлен на вакансию - да/нет.
+    '''
+    pass
 
 
 if __name__ == '__main__':

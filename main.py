@@ -1,44 +1,6 @@
 #!/usr/bin/python3
 __author__ = 'ArkJzzz (arkjzzz@gmail.com)'
 
-'''
-TODO
-
-Добавить реализацию заливки с места последнего запуска.
-Варианты:
-    - добавление дополнительного столбца в файле с кандидатами (см. update_applicants_file(applicants_file))
-
-        При выполнении get_applicants_from_excel_file(applicants_file) добавить столбец "статус добавления" (если не существует) и считывать данные ячеек из этого столбца:
-            'huntflow_upload': row[5].value if row[5].value else False, 
-                    # -> False, added_to_huntflow, added_to_vacancy
-        
-        Перед выполнением add_applicant() считывать значение applicant['huntflow_upload']:
-            if not applicant['huntflow_upload']:
-                add_applicant()
-            elif applicant['huntflow_upload'] ==  added_to_huntflow:
-                add_to_vacancy()
-            else:
-                continue
-
-        При выполнении add_applicant(): 
-            if response.ok:
-                записать в таблицу: added_to_huntflow
-            else:
-                Ошибка добавления кандидата
-
-        При выполнении add_to_vacancy(): 
-            if response.ok:
-                записать в таблицу: added_to_vacancy
-            else:
-                Ошибка добавления на вакансию
-    
-
-    - подключение redis ({applicant['fullname']: upload_status} -> False, added_to_huntflow, added_to_vacancy)
-
-    - подключение SQLite
-
-
-'''
 
 
 import argparse
@@ -89,7 +51,6 @@ def main():
 
     parser.add_argument('huntflow_token', help='Токен к API Huntflow')
     parser.add_argument('directory', help='Путь к директории, с файлами')
-    # parser.add_argument('applicants_file', help='Имя файла с кандидатами')
     args = parser.parse_args()
 
     '''
@@ -141,19 +102,24 @@ def main():
                 recognized_resume=recognized_resume, 
                 vacancies=vacancies,
             )
-        add_applicant(
+
+        if applicant['huntflow_upload'] != 'выгружен':
+            add_applicant(
                 token=huntflow_token,
                 applicant_data=applicant_data,
             )
+            last_added = get_applicants(huntflow_token)['items'][0]
+            applicant['id'] = last_added['id']
+            
+            result = add_to_vacancy(
+                token=huntflow_token, 
+                applicant=applicant, 
+                vacancies=vacancies, 
+                recognized_resume=recognized_resume,
+                applicants_file=applicants_file,
+            )
+                
 
-        last_added = get_applicants(huntflow_token)['items'][0]
-        applicant['id'] = last_added['id']
-        add_to_vacancy(
-            token=huntflow_token, 
-            applicant=applicant, 
-            vacancies=vacancies, 
-            recognized_resume=recognized_resume,
-        )
 
 
 def get_company_vacancies(token):
@@ -193,21 +159,34 @@ def get_applicants_from_excel_file(applicants_file):
       файла резюме
     '''
 
-    workbook = openpyxl.load_workbook(applicants_file, read_only=True)
+    workbook = openpyxl.load_workbook(applicants_file, read_only=False)
     sheet_names = workbook.get_sheet_names()
     sheet_name = sheet_names[0]
     excel_data = workbook.get_sheet_by_name(sheet_name)
+    last_column = excel_data.max_column
+    cell = excel_data.cell(row=1, column=last_column)
+
+    for row in list(excel_data.rows)[1:]:
+        replace_noncyrillic_characters(row[1].value)
+
+    if cell.value != 'Статус выгрузки':
+        last_column += 1
+    excel_data.cell(row=1, column=last_column).value = 'Статус выгрузки'
+
     applicants = []
 
     for row in list(excel_data.rows)[1:]:
         applicant = {
             'position': row[0].value,
-            'fullname': replace_noncyrillic_characters(row[1].value),
+            'fullname': row[1].value,
             'salary': ''.join(re.findall(r'\d', str(row[2].value))),
             'comment': row[3].value,
             'status': replace_status(row[4].value),
+            'huntflow_upload': row[5].value if row[5].value else False,
         }
         applicants.append(applicant)
+
+    workbook.save(applicants_file)
 
     logger.info('Файл {} успешно прочитан'.format(applicants_file))
 
@@ -370,10 +349,10 @@ def get_applicants(token):
     return(response.json())
 
 
-def add_to_vacancy(token, applicant, vacancies, recognized_resume):
+def add_to_vacancy(token, applicant, vacancies, recognized_resume, applicants_file):
     ''' Добавление кандидата на ваканcию 
 
-    Предполагается, что  значения ячеек столбца 'Должность' выбираются из списка и соответствуют названию вакансии в Хантфлоу
+    Предполагается, что  значенapplicantия ячеек столбца 'Должность' выбираются из списка и соответствуют названию вакансии в Хантфлоу
     '''
 
     url = 'https://{host}/account/{id}/applicants/{applicant_id}/vacancy'.format(
@@ -411,6 +390,7 @@ def add_to_vacancy(token, applicant, vacancies, recognized_resume):
                 position=applicant['position'],
             )
         )
+        update_applicants_file(applicants_file, applicant)
     else:
         logger.error('Ошибка добавления кандидата {applicant_name} в Huntflow на должность {position}'.format(
                 applicant_name=applicant['fullname'],
@@ -477,13 +457,21 @@ def replace_status(status):
     return status
 
 
-def update_applicants_file(applicants_file):
+def update_applicants_file(applicants_file, applicant):
     '''
     Добавляет информацию о статусе загрузки информации о кандидате в базу: 
-    - кандидат добавлен в базу - да/нет; 
-    - кандидат добавлен на вакансию - да/нет.
+    - кандидат добавлен в базу на вакансию - да/нет.
     '''
-    pass
+    workbook = openpyxl.load_workbook(applicants_file, read_only=False)
+    sheet_names = workbook.get_sheet_names()
+    sheet_name = sheet_names[0]
+    excel_data = workbook.get_sheet_by_name(sheet_name)
+    
+    for row in list(excel_data.rows)[1:]:
+        if row[1].value == applicant['fullname']:
+            row[5].value = 'выгружен'
+
+    workbook.save(applicants_file)
 
 
 if __name__ == '__main__':
